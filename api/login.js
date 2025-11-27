@@ -1,35 +1,25 @@
-// api/login.js
-
-const CLIENT_ID = process.env.SPOTIFY_CLIENT_ID;
-const REDIRECT_URI = process.env.SPOTIFY_REDIRECT_URI || "https://roblox-spotify-backend.vercel.app/api/callback.js";
-
-// Example: /api/login?robloxId=1832410165
-module.exports = (req, res) => {
+export default function handler(req, res) {
   try {
     const robloxId = req.query.robloxId;
+    if (!robloxId) return res.status(400).json({ error: "Missing Roblox ID" });
 
-    if (!robloxId) {
-      res.status(400).json({ error: "Missing robloxId" });
-      return;
+    const clientId = process.env.SPOTIFY_CLIENT_ID;
+    const redirectUri = process.env.SPOTIFY_REDIRECT_URI;
+
+    if (!clientId || !redirectUri) {
+      return res.status(500).json({ error: "Missing Spotify env vars" });
     }
 
-    if (!CLIENT_ID || !REDIRECT_URI) {
-      res.status(500).json({ error: "Server not configured (missing env vars)" });
-      return;
-    }
+    const loginUrl =
+      "https://accounts.spotify.com/authorize?" +
+      "response_type=code" +
+      "&client_id=" + clientId +
+      "&scope=user-read-currently-playing" +
+      "&redirect_uri=" + encodeURIComponent(redirectUri) +
+      "&state=" + robloxId;
 
-    const params = new URLSearchParams({
-      response_type: "code",
-      client_id: String(CLIENT_ID),
-      scope: "user-read-currently-playing",
-      redirect_uri: String(REDIRECT_URI),
-      state: String(robloxId),
-    });
-
-    const loginUrl = "https://accounts.spotify.com/authorize?" + params.toString();
     res.status(200).json({ loginUrl });
   } catch (err) {
-    console.error("login error", err);
-    res.status(500).json({ error: "Unexpected server error" });
+    res.status(500).json({ error: err.message });
   }
-};
+}
