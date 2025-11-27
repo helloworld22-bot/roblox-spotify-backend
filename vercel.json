@@ -1,13 +1,7 @@
 {
-  "version": 2,
-  "builds": [
-    { "src": "api/login.js", "use": "@vercel/node" },
-    { "src": "api/callback.js", "use": "@vercel/node" },
-    { "src": "api/currently-playing.js", "use": "@vercel/node" }
-  ],
-  "routes": [
-    { "src": "/api/login", "dest": "api/login.js" },
-    { "src": "/api/callback", "dest": "api/callback.js" },
-    { "src": "/api/currently-playing", "dest": "api/currently-playing.js" }
-  ]
+  "functions": {
+    "api/*.js": {
+      "runtime": "nodejs18.x"
+    }
+  }
 }
