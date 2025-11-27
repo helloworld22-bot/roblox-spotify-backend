@@ -1,11 +1,31 @@
-export default function handler(req, res) {
-    const robloxId = req.query.robloxId;
+// api/login.js
 
-    if (!robloxId) {
-        return res.status(400).json({ error: "Missing robloxId" });
-    }
+const CLIENT_ID = process.env.SPOTIFY_CLIENT_ID;
+const REDIRECT_URI = process.env.SPOTIFY_REDIRECT_URI || "";
 
-    const redirect = `https://accounts.spotify.com/authorize?response_type=code&client_id=${process.env.SPOTIFY_CLIENT_ID}&scope=user-read-currently-playing&redirect_uri=${process.env.SPOTIFY_REDIRECT_URI}&state=${robloxId}`;
+module.exports = async function (req, res) {
+  const { robloxId } = req.query;
 
-    return res.status(200).json({ loginUrl: redirect });
-}
+  if (!robloxId) {
+    res.status(400).json({ error: "Missing robloxId" });
+    return;
+  }
+
+  if (!CLIENT_ID || !REDIRECT_URI) {
+    res.status(500).json({ error: "Server not configured" });
+    return;
+  }
+
+  const params = new URLSearchParams({
+    response_type: "code",
+    client_id: CLIENT_ID,
+    scope: "user-read-currently-playing",
+    redirect_uri: REDIRECT_URI,
+    state: String(robloxId),
+  });
+
+  const loginUrl = `https://accounts.spotify.com/authorize?${params.toString()}`;
+
+  res.setHeader("Content-Type", "application/json");
+  res.status(200).end(JSON.stringify({ loginUrl }));
+};
