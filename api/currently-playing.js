@@ -1,48 +1,66 @@
-export default async function handler(req, res) {
-    const robloxId = req.query.robloxId;
+// api/currently-playing.js
 
-    if (!robloxId) {
-        return res.status(400).json({ error: "Missing robloxId" });
-    }
+const { getSession } = require("./sessionStore");
 
-    global.tokens = global.tokens || {};
-    const accessToken = global.tokens[robloxId];
+async function fetchCurrentlyPlaying(accessToken) {
+  const resp = await fetch("https://api.spotify.com/v1/me/player/currently-playing", {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
 
-    if (!accessToken) {
-        return res.status(200).json({ error: "Not connected" });
-    }
+  if (resp.status === 204) {
+    return { is_playing: false, item: null };
+  }
 
-    const nowPlaying = await fetch("https://api.spotify.com/v1/me/player/currently-playing", {
-        headers: {
-            Authorization: "Bearer " + accessToken,
-        },
-    });
+  if (!resp.ok) {
+    const text = await resp.text();
+    console.error("Spotify currently-playing error:", resp.status, text);
+    throw new Error("Spotify error");
+  }
 
-    if (nowPlaying.status === 204) {
-        return res.status(200).json({ isPlaying: false });
-    }
+  return resp.json();
+}
 
-    const data = await nowPlaying.json();
+module.exports = async function (req, res) {
+  const { robloxId } = req.query;
 
-    const title = data?.item?.name || "Unknown Track";
-    const artist = data?.item?.artists?.[0]?.name || "Unknown Artist";
+  if (!robloxId) {
+    res.status(400).json({ error: "Missing robloxId" });
+    return;
+  }
 
-    // Filter curse words
-    const filterBadWords = (text) => {
-        const badWords = ["fuck", "nigger", "nigga", "bitch", "cunt", "whore", "faggot", "kike", "retard", "slut"];
-        let lower = text.toLowerCase();
-        badWords.forEach((w) => {
-            if (lower.includes(w)) {
-                const regex = new RegExp(w, "gi");
-                text = text.replace(regex, "###");
-            }
-        });
-        return text;
+  const session = getSession(String(robloxId));
+
+  if (!session) {
+    res.status(401).json({ error: "Not connected" });
+    return;
+  }
+
+  try {
+    const data = await fetchCurrentlyPlaying(session.accessToken);
+
+    let result = {
+      is_playing: data.is_playing || false,
+      progress_ms: data.progress_ms || 0,
+      item: null,
     };
 
-    res.status(200).json({
-        isPlaying: true,
-        trackName: filterBadWords(title),
-        artist: filterBadWords(artist),
-    });
-}
+    if (data.item) {
+      result.item = {
+        name: data.item.name,
+        artists: (data.item.artists || []).map((a) => a.name),
+        album: data.item.album ? data.item.album.name : null,
+        album_art:
+          data.item.album && data.item.album.images && data.item.album.images[0]
+            ? data.item.album.images[0].url
+            : null,
+      };
+    }
+
+    res.status(200).json(result);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Spotify request failed" });
+  }
+};
