@@ -1,37 +1,70 @@
-import querystring from "querystring";
+// api/callback.js
 
-export default async function handler(req, res) {
-    const code = req.query.code;
-    const robloxId = req.query.state;
+const { saveSession } = require("./sessionStore");
 
-    if (!code || !robloxId) {
-        return res.status(400).send("Missing code or Roblox ID");
-    }
+const CLIENT_ID = process.env.SPOTIFY_CLIENT_ID;
+const CLIENT_SECRET = process.env.SPOTIFY_CLIENT_SECRET;
+const REDIRECT_URI = process.env.SPOTIFY_REDIRECT_URI || "";
 
-    const tokenResponse = await fetch("https://accounts.spotify.com/api/token", {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/x-www-form-urlencoded",
-            Authorization:
-                "Basic " +
-                Buffer.from(
-                    process.env.SPOTIFY_CLIENT_ID + ":" + process.env.SPOTIFY_CLIENT_SECRET
-                ).toString("base64"),
-        },
-        body: querystring.stringify({
-            grant_type: "authorization_code",
-            code: code,
-            redirect_uri: process.env.SPOTIFY_REDIRECT_URI,
-        }),
-    });
+async function exchangeCodeForToken(code) {
+  const body = new URLSearchParams({
+    grant_type: "authorization_code",
+    code,
+    redirect_uri: REDIRECT_URI,
+  });
 
-    const tokenData = await tokenResponse.json();
-    if (!tokenData.access_token) {
-        return res.status(500).send("Failed to get access token");
-    }
+  const basic = Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString("base64");
 
-    global.tokens = global.tokens || {};
-    global.tokens[robloxId] = tokenData.access_token;
+  const resp = await fetch("https://accounts.spotify.com/api/token", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      Authorization: `Basic ${basic}`,
+    },
+    body: body.toString(),
+  });
 
-    res.send("Spotify connected. You can close this tab.");
+  if (!resp.ok) {
+    const text = await resp.text();
+    console.error("Spotify token error:", resp.status, text);
+    throw new Error("Failed to get access token");
+  }
+
+  return resp.json();
 }
+
+module.exports = async function (req, res) {
+  const { code, state } = req.query;
+
+  if (!code || !state) {
+    res.status(400).send("Missing code or state");
+    return;
+  }
+
+  const robloxId = String(state);
+
+  if (!CLIENT_ID || !CLIENT_SECRET || !REDIRECT_URI) {
+    res.status(500).send("Server not configured");
+    return;
+  }
+
+  try {
+    const tokenData = await exchangeCodeForToken(code);
+    saveSession(robloxId, tokenData);
+
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.status(200).send(`
+      <html>
+        <body style="font-family: system-ui; text-align:center; margin-top:40px;">
+          <h2>Spotify linked</h2>
+          <p>Roblox user <b>${robloxId}</b> is now connected.</p>
+          <p>You can close this tab and go back to Roblox.</p>
+        </body>
+      </html>
+    `);
+  } catch (err) {
+    console.error(err);
+    res.status(500).send("Failed to get access token");
+  }
+};
+v
