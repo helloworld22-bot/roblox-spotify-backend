@@ -1,66 +1,100 @@
 // api/currently-playing.js
 
-const { getSession } = require("./sessionStore");
+// Import the tokens object from callback.js.
+// On Vercel, this will be bundled together and share memory
+// in the same server instance.
+const callback = require("./callback.js");
+const tokens = callback._tokens || {};
 
-async function fetchCurrentlyPlaying(accessToken) {
-  const resp = await fetch("https://api.spotify.com/v1/me/player/currently-playing", {
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-    },
-  });
-
-  if (resp.status === 204) {
-    return { is_playing: false, item: null };
-  }
-
-  if (!resp.ok) {
-    const text = await resp.text();
-    console.error("Spotify currently-playing error:", resp.status, text);
-    throw new Error("Spotify error");
-  }
-
-  return resp.json();
+async function fetchJson(url, options) {
+  const res = await fetch(url, options);
+  const data = await res.json().catch(() => ({}));
+  return { ok: res.ok, data, status: res.status };
 }
 
-module.exports = async function (req, res) {
-  const { robloxId } = req.query;
+async function ensureAccessToken(robloxId) {
+  const info = tokens[robloxId];
+  if (!info) return null;
 
-  if (!robloxId) {
-    res.status(400).json({ error: "Missing robloxId" });
-    return;
+  // Not expired yet
+  if (info.expires_at && info.expires_at > Date.now()) {
+    return info.access_token;
   }
 
-  const session = getSession(String(robloxId));
+  // No refresh token – cannot refresh
+  if (!info.refresh_token) return null;
 
-  if (!session) {
-    res.status(401).json({ error: "Not connected" });
-    return;
-  }
+  const body = new URLSearchParams({
+    grant_type: "refresh_token",
+    refresh_token: String(info.refresh_token),
+  });
 
+  const { ok, data } = await fetchJson("https://accounts.spotify.com/api/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+  });
+
+  if (!ok || !data.access_token) return null;
+
+  info.access_token = data.access_token;
+  info.expires_at = Date.now() + (data.expires_in || 3600) * 1000 - 60_000;
+  return info.access_token;
+}
+
+// Example: /api/currently-playing?robloxId=1832410165
+module.exports = async (req, res) => {
   try {
-    const data = await fetchCurrentlyPlaying(session.accessToken);
+    const robloxId = req.query.robloxId;
 
-    let result = {
-      is_playing: data.is_playing || false,
-      progress_ms: data.progress_ms || 0,
-      item: null,
-    };
-
-    if (data.item) {
-      result.item = {
-        name: data.item.name,
-        artists: (data.item.artists || []).map((a) => a.name),
-        album: data.item.album ? data.item.album.name : null,
-        album_art:
-          data.item.album && data.item.album.images && data.item.album.images[0]
-            ? data.item.album.images[0].url
-            : null,
-      };
+    if (!robloxId) {
+      res.status(400).json({ error: "Missing robloxId" });
+      return;
     }
 
-    res.status(200).json(result);
+    const tokenInfo = tokens[robloxId];
+    if (!tokenInfo) {
+      res.status(200).json({ error: "Not connected" });
+      return;
+    }
+
+    const accessToken = await ensureAccessToken(robloxId);
+    if (!accessToken) {
+      res.status(200).json({ error: "Not connected" });
+      return;
+    }
+
+    const { ok, data, status } = await fetchJson(
+      "https://api.spotify.com/v1/me/player/currently-playing",
+      {
+        method: "GET",
+        headers: {
+          Authorization: "Bearer " + accessToken,
+        },
+      }
+    );
+
+    if (status === 204) {
+      // Nothing playing
+      res.status(200).json({ playing: false });
+      return;
+    }
+
+    if (!ok) {
+      console.error("currently-playing error", data);
+      res.status(200).json({ error: "Spotify API error" });
+      return;
+    }
+
+    res.status(200).json({
+      playing: !!data.is_playing,
+      track: data.item ? {
+        name: data.item.name,
+        artists: data.item.artists?.map(a => a.name).join(", "),
+        album: data.item.album?.name,
+      } : null,
+    });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Spotify request failed" });
+    console.error("currently-playing crash", err);
+    res.status(500).json({ error: "Internal server error" });
   }
 };
